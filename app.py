@@ -34,4 +34,11 @@ class VideoProcessor(VideoProcessorBase):
 st.title("Senior Computer Vision Web App")
 st.write("Telefoningiz kamerasini yoqing va natijani ko'ring!")
 
-webrtc_streamer(key="example", video_processor_factory=VideoProcessor)
+webrtc_streamer(
+    key="example", 
+    video_processor_factory=VideoProcessor,
+    rtc_configuration={  # Bu qism telefon brauzerida kamera ishlashi uchun shart
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    },
+    media_stream_constraints={"video": True, "audio": False},
+)
