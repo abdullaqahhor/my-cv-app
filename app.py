@@ -4,92 +4,82 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-# MediaPipe modullarini to'g'ridan-to'g'ri chaqirish (AttributeError oldini olish uchun)
-from mediapipe.python.solutions import pose as mp_pose
+# MediaPipe qo'l moduli
+from mediapipe.python.solutions import hands as mp_hands
 from mediapipe.python.solutions import drawing_utils as mp_drawing
 
-# 1. Burchakni hisoblash funksiyasi
-def calculate_angle(a, b, c):
-    a, b, c = np.array(a), np.array(b), np.array(c)
-    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
-    angle = np.abs(radians*180.0/np.pi)
-    return 360-angle if angle > 180.0 else angle
-
-# 2. Asosiy Video ishlovchi klass
-class OptimizedProcessor(VideoProcessorBase):
+class GestureProcessor(VideoProcessorBase):
     def __init__(self):
-        # Eng yengil model sozlamalari (qotib qolmasligi uchun)
-        self.pose = mp_pose.Pose(
+        self.hands = mp_hands.Hands(
             static_image_mode=False,
-            model_complexity=0, # 0 - eng tezkor model
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            max_num_hands=1,
+            model_complexity=0, # Tez ishlashi uchun
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
         )
-        self.counter = 0
-        self.stage = None
+        self.draw_color = (0, 255, 0)
+        self.canvas = None
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        img = cv2.flip(img, 1) # Mirror effekt
+        img = cv2.flip(img, 1)
         
+        # Kanvas yaratish (chizish uchun)
+        if self.canvas is None:
+            self.canvas = np.zeros_like(img)
+
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = self.pose.process(img_rgb)
+        results = self.hands.process(img_rgb)
 
-        if results.pose_landmarks:
-            landmarks = results.pose_landmarks.landmark
-            
-            # Nuqtalar koordinatalarini olish (Chap qo'l misolida)
-            shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x, landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y]
-            elbow = [landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].x, landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value].y]
-            wrist = [landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].x, landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value].y]
-            
-            angle = calculate_angle(shoulder, elbow, wrist)
-            
-            # Sport sanash mantiqi
-            if angle > 160: self.stage = "Pastda"
-            if angle < 30 and self.stage == "Pastda":
-                self.stage = "Tepada"
-                self.counter += 1
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Ko'rsatkich barmog'i uchi (Index finger tip)
+                index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                h, w, c = img.shape
+                cx, cy = int(index_tip.x * w), int(index_tip.y * h)
 
-            # Ekranga ma'lumotlarni chizish
-            mp_drawing.draw_landmarks(img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            
-            # Dashboard qismi
-            cv2.rectangle(img, (0,0), (250, 70), (0,0,0), -1)
-            cv2.putText(img, f"ANGLE: {int(angle)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-            cv2.putText(img, f"REPS: {self.counter}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 3)
+                # Bosh barmoq uchi (Thumb tip) - masofani o'lchash uchun
+                thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
+                tx, ty = int(thumb_tip.x * w), int(thumb_tip.y * h)
 
+                # Barmoqlar orasidagi masofa (Click simulyatsiyasi)
+                distance = np.sqrt((cx-tx)**2 + (cy-ty)**2)
+
+                if distance < 40:
+                    # Agar barmoqlar birlashsa - CHIZISH (qizil rangda)
+                    cv2.circle(self.canvas, (cx, cy), 10, (0, 0, 255), cv2.FILLED)
+                    cv2.putText(img, "CHIZISH REJIMIDA", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                else:
+                    # Oddiy harakat - KO'RSATISH (yashil nuqta)
+                    cv2.circle(img, (cx, cy), 15, (0, 255, 0), cv2.FILLED)
+
+                mp_drawing.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        # Kanvasni asosiy rasm bilan birlashtirish
+        img = cv2.addWeighted(img, 1, self.canvas, 0.5, 0)
         return frame.from_ndarray(img, format="bgr24")
 
-# --- UI INTERFEYS ---
-st.set_page_config(page_title="AI Pro Trainer", layout="wide")
-st.title("🏋️‍♂️ AI Professional Fitness Dashboard")
-
-# Tarmoq ulanishini kuchaytirish (SignallingTimeout oldini oladi)
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [
-        {"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}
-    ]}
-)
+# --- UI ---
+st.set_page_config(page_title="AI Virtual Mouse", layout="wide")
+st.title("🖐️ AI Virtual Drawing & Gesture Control")
 
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    st.markdown("### 🎥 Jonli tahlil")
     webrtc_streamer(
-        key="pro-trainer",
-        video_processor_factory=OptimizedProcessor,
-        rtc_configuration=RTC_CONFIGURATION,
-        media_stream_constraints={
-            "video": {"width": 640, "height": 480, "frameRate": 15},
-            "audio": False
-        },
+        key="gesture-control",
+        video_processor_factory=GestureProcessor,
+        rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+        media_stream_constraints={"video": True, "audio": False},
         async_processing=True
     )
 
 with col2:
-    st.markdown("### 📊 Ko'rsatkichlar")
-    st.info("Kameraga yoningiz bilan turing.")
-    st.metric(label="Mashq", value="Bicep Curls")
-    if st.button("Hisobni nolga tushirish"):
-        st.experimental_rerun()
+    st.write("### 🎮 Qanday boshqariladi?")
+    st.info("""
+    1. **Ko'rsatkich barmog'ingizni** ko'taring - bu sichqoncha kursorini harakatlantiradi.
+    2. **Bosh barmoq va ko'rsatkich barmoqni** bir-biriga tekkizing - bu chizishni boshlaydi (Click).
+    3. Ekranni tozalash uchun sahifani yangilang (Refresh).
+    """)
+    if st.button("Rasmni o'chirish"):
+        st.rerun()
