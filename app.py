@@ -1,8 +1,13 @@
+
+
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import cv2
 import mediapipe as mp
 
+# MediaPipe-ni chaqirish usulini o'zgartiramiz
+from mediapipe.python.solutions import holistic as mp_holistic
+from mediapipe.python.solutions import drawing_utils as mp_drawing
 # MediaPipe modullari
 mp_holistic = mp.solutions.holistic
 mp_drawing = mp.solutions.drawing_utils
